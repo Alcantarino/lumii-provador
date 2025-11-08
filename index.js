@@ -1,4 +1,4 @@
-// index.js — Lumii Provador (estrutura igual ao "modelos", ajustado para duas imagens)
+// index.js — Lumii Provador - Lincoln (versão final com limpeza de Base64 e estrutura idêntica ao "modelos")
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -31,9 +31,9 @@ app.post("/tryon", async (req, res) => {
       return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
     }
 
-    // Remove prefixos base64 se existirem
-    const pessoaBase64 = fotoPessoa.replace(/^data:image\/\w+;base64,/, "");
-    const roupaBase64 = fotoRoupa.replace(/^data:image\/\w+;base64,/, "");
+    // 🔧 Remover prefixo Base64 (data:image/...;base64,)
+    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
+    const roupaBase64 = fotoRoupa.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
 
     // === PROMPT ===
     const prompt = `
@@ -43,7 +43,7 @@ mantendo rosto, corpo, pose e iluminação naturais.
 Cenário neutro, integração perfeita entre pessoa e roupa, realismo máximo.
 Retorne apenas a imagem final.`;
 
-    console.log("🧠 Enviando prompt ao Gemini...");
+    console.log("🧠 Enviando imagens ao Gemini...");
 
     const result = await model.generateContent([
       { text: prompt },
