@@ -38,8 +38,8 @@ Cenário neutro, iluminação suave.`;
 
     const result = await model.generateContent([
       { text: prompt },
-      { inlineData: { mimeType: "image/png", data: fotoPessoa } },
-      { inlineData: { mimeType: "image/png", data: fotoRoupa } },
+      { inlineData: { mimeType: "image/jpeg", data: fotoPessoa.replace(/^data:image\/[a-z]+;base64,/, "") } },
+	  { inlineData: { mimeType: "image/jpeg", data: fotoRoupa.replace(/^data:image\/[a-z]+;base64,/, "") } }
     ]);
 
     const response = await result.response;
