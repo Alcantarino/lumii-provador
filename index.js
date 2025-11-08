@@ -1,23 +1,28 @@
-// JavaScript Document
-// index.js — Lumii Provador (baseado no modelos)
+// index.js — Lumii Provador Lincoln (Cloud Run versão final)
 import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-// === CONFIG GERAL ===
-const TEMP_DIR = path.resolve("./assets/temp");
+// === Configuração de diretórios ===
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const TEMP_DIR = path.join(__dirname, "assets/temp");
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
 
+// === Configuração do modelo Gemini ===
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+// === Rotas ===
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Lumii Provador ativo e pronto!");
+  res.status(200).send("✅ Lumii Provador ativo e rodando no Cloud Run!");
 });
 
 app.post("/tryon", async (req, res) => {
@@ -27,14 +32,14 @@ app.post("/tryon", async (req, res) => {
       return res.status(400).json({ success: false, message: "Faltam imagens." });
 
     const prompt = `
-Fotografia realista de corpo inteiro. 
-Aplique fielmente a roupa fornecida sobre a pessoa enviada, mantendo textura, forma e iluminação originais. 
+Fotografia realista de corpo inteiro.
+Aplique fielmente a roupa fornecida sobre a pessoa enviada, mantendo textura, forma e iluminação originais.
 Cenário neutro, iluminação suave.`;
 
     const result = await model.generateContent([
       { text: prompt },
       { inlineData: { mimeType: "image/png", data: fotoPessoa } },
-      { inlineData: { mimeType: "image/png", data: fotoRoupa } }
+      { inlineData: { mimeType: "image/png", data: fotoRoupa } },
     ]);
 
     const response = await result.response;
