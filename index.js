@@ -1,4 +1,4 @@
-// index.js — Lumii Provador Lincoln (versão final com Base64 e stream corrigidos)
+// index.js — Lumii Provador (ajuste final base64)
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -21,11 +21,11 @@ if (!process.env.GEMINI_API_KEY) {
   console.error("GEMINI_API_KEY ausente no ambiente.");
 }
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
 
 // === HEALTH ===
 app.get("/", (_req, res) => {
-  res.status(200).send("✅ Lumii Provador ativo e rodando no Cloud Run!");
+  res.status(200).send("✅ Lumii Provador ativo e rodando");
 });
 
 // === TRY-ON ===
@@ -34,10 +34,7 @@ app.post("/tryon", async (req, res) => {
   try {
     const { fotoPessoa, fotoRoupa } = req.body || {};
     if (!fotoPessoa || !fotoRoupa) {
-      return res.status(400).json({
-        success: false,
-        message: "Envie as duas imagens (pessoa e roupa).",
-      });
+      return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
     }
 
     console.log("[TRYON] Recebendo imagens...");
@@ -49,41 +46,33 @@ Aplique fielmente a roupa da segunda imagem sobre a pessoa da primeira imagem,
 mantendo rosto, corpo, pose, iluminação e fundo originais.
 Ajuste sombras, dobras e reflexos. Retorne somente a imagem final renderizada (sem texto).`;
 
-    // 🔧 CORREÇÃO: remove o prefixo base64
-    const pPessoa = (fotoPessoa || "").replace(/^data:image\/\w+;base64,/, "").replace(/\s+/g, "");
-    const pRoupa = (fotoRoupa || "").replace(/^data:image\/\w+;base64,/, "").replace(/\s+/g, "");
+    // 🧩 LINHAS AJUSTADAS — removem o prefixo antes de enviar ao modelo
+    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-z]+;base64,/, "");
+    const roupaBase64  = fotoRoupa.replace(/^data:image\/[a-z]+;base64,/, "");
 
-    // === NOVO MÉTODO: STREAM DO GEMINI ===
-    const result = await model.generateContentStream({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: "image/jpeg", data: pPessoa } },
-            { inlineData: { mimeType: "image/jpeg", data: pRoupa } },
-          ],
-        },
-      ],
+    const parts = [
+      { text: prompt },
+      { inlineData: { mimeType: "image/jpeg", data: pessoaBase64 } },
+      { inlineData: { mimeType: "image/jpeg", data: roupaBase64 } }
+    ];
+
+    const result = await model.generateContent(parts, {
+      generationConfig: { responseMimeType: "image/jpeg" }
     });
 
-    let base64 = null;
-    for await (const item of result.stream) {
-      const part = item?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
-      if (part?.inlineData?.data) {
-        base64 = part.inlineData.data;
-        break;
-      }
-    }
+    const response = await result.response;
+    const imagePart = response?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
 
-    if (!base64) {
-      console.error("[TRYON][NO_IMAGE_STREAM]");
+    if (!imagePart) {
+      const reason = response?.promptFeedback || response?.candidates?.[0]?.finishReason;
+      console.error("[TRYON][NO_IMAGE]", JSON.stringify(reason, null, 2));
       return res.status(502).json({
         success: false,
-        message: "Não foi possível gerar a imagem (stream vazia).",
+        message: "Não foi possível gerar a imagem (resposta inesperada do modelo)."
       });
     }
 
+    const base64 = imagePart.inlineData.data;
     const filename = `provador_${Date.now()}.jpg`;
     const filepath = path.join(TEMP_DIR, filename);
     fs.writeFileSync(filepath, Buffer.from(base64, "base64"));
@@ -93,10 +82,7 @@ Ajuste sombras, dobras e reflexos. Retorne somente a imagem final renderizada (s
 
   } catch (e) {
     console.error("[TRYON][ERROR]", e?.message || e);
-    return res.status(500).json({
-      success: false,
-      message: e?.message || "Erro interno no servidor.",
-    });
+    return res.status(500).json({ success: false, message: e?.message || "Erro interno." });
   }
 });
 
