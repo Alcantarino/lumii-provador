@@ -1,4 +1,4 @@
-// index.js — Lumii Provador (ajuste final base64)
+// index.js — Lumii Provador (versão final, limpeza total Base64)
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -18,7 +18,7 @@ if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 // === GEMINI ===
 if (!process.env.GEMINI_API_KEY) {
-  console.error("GEMINI_API_KEY ausente no ambiente.");
+  console.error("⚠️ GEMINI_API_KEY ausente no ambiente.");
 }
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
@@ -27,6 +27,13 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
 app.get("/", (_req, res) => {
   res.status(200).send("✅ Lumii Provador ativo e rodando");
 });
+
+// === FUNÇÃO DE LIMPEZA ROBUSTA ===
+function cleanBase64(str) {
+  if (!str || typeof str !== "string") return "";
+  // Remove prefixos comuns e espaços/lixo
+  return str.replace(/^["']?data:image\/[a-zA-Z0-9+.-]+;base64,["']?/, "").replace(/\s/g, "");
+}
 
 // === TRY-ON ===
 app.post("/tryon", async (req, res) => {
@@ -37,18 +44,21 @@ app.post("/tryon", async (req, res) => {
       return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
     }
 
-    console.log("[TRYON] Recebendo imagens...");
-    console.log("Pessoa tamanho:", fotoPessoa.length, "Roupa tamanho:", fotoRoupa.length);
+    const pessoaBase64 = cleanBase64(fotoPessoa);
+    const roupaBase64  = cleanBase64(fotoRoupa);
+
+    if (!pessoaBase64 || !roupaBase64) {
+      return res.status(400).json({ success: false, message: "Imagens inválidas ou vazias." });
+    }
+
+    console.log("[TRYON] Pessoa bytes:", Buffer.from(pessoaBase64, "base64").length);
+    console.log("[TRYON] Roupa  bytes:", Buffer.from(roupaBase64, "base64").length);
 
     const prompt = `
 Fotografia realista de corpo inteiro.
 Aplique fielmente a roupa da segunda imagem sobre a pessoa da primeira imagem,
 mantendo rosto, corpo, pose, iluminação e fundo originais.
 Ajuste sombras, dobras e reflexos. Retorne somente a imagem final renderizada (sem texto).`;
-
-    // 🧩 LINHAS AJUSTADAS — removem o prefixo antes de enviar ao modelo
-    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-z]+;base64,/, "");
-    const roupaBase64  = fotoRoupa.replace(/^data:image\/[a-z]+;base64,/, "");
 
     const parts = [
       { text: prompt },
@@ -77,7 +87,7 @@ Ajuste sombras, dobras e reflexos. Retorne somente a imagem final renderizada (s
     const filepath = path.join(TEMP_DIR, filename);
     fs.writeFileSync(filepath, Buffer.from(base64, "base64"));
 
-    console.log("[TRYON] OK em", Date.now() - t0, "ms");
+    console.log("[TRYON] ✅ OK em", Date.now() - t0, "ms");
     return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
 
   } catch (e) {
