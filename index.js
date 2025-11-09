@@ -21,7 +21,7 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.0-pro-vision" });
 app.get("/", (_req, res) => res.status(200).send("✅ Lumii Provador ativo!"));
 
 // === TRY-ON (Provador IA) — versão com diagnóstico completo ===
-// === TRY-ON (Provador IA) — versão final, sem prefixo data:image/... ===
+// === TRY-ON (Provador IA) — versão final 100% limpa ===
 app.post("/tryon", async (req, res) => {
   let outputPath = null;
   const t0 = Date.now();
@@ -29,23 +29,36 @@ app.post("/tryon", async (req, res) => {
   try {
     const { fotoPessoa, fotoRoupa } = req.body || {};
     if (!fotoPessoa || !fotoRoupa) {
-      return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
+      return res.status(400).json({
+        success: false,
+        message: "Envie as duas imagens (pessoa e roupa)."
+      });
     }
 
-    // === REMOVE PREFIXOS ===
-    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, "").trim();
-    const roupaBase64  = fotoRoupa.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, "").trim();
+    // === LIMPEZA COMPLETA DO BASE64 ===
+    function cleanBase64(dataUrl) {
+      if (!dataUrl || typeof dataUrl !== "string") return "";
+      return dataUrl
+        .replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, "") // remove prefixo
+        .replace(/\s/g, ""); // remove quebras e espaços
+    }
 
-    // === DEBUG: tamanhos ===
+    const pessoaBase64 = cleanBase64(fotoPessoa);
+    const roupaBase64  = cleanBase64(fotoRoupa);
+
+    // === DEBUG: confirmar limpeza ===
+    console.log("[TRYON] pessoa prefixo removido?", !fotoPessoa.includes("data:image/"));
+    console.log("[TRYON] roupa prefixo removido?", !fotoRoupa.includes("data:image/"));
     console.log("[TRYON] pessoa bytes:", Buffer.from(pessoaBase64, "base64").length);
-    console.log("[TRYON] roupa  bytes:", Buffer.from(roupaBase64, "base64").length);
+    console.log("[TRYON] roupa  bytes:", Buffer.from(roupaBase64,  "base64").length);
 
+    // === PROMPT ===
     const prompt =
       "Apply the clothing from the second image onto the person from the first image. " +
-      "Preserve face, body, pose, lighting and background. " +
-      "Keep exact garment color, texture and print. Return only the final realistic photo.";
+      "Preserve face, body, pose, lighting, and background exactly. " +
+      "Keep the garment’s real color, texture, and pattern. Return only the final realistic photo.";
 
-    // === ENVIA IMAGENS LIMPA ===
+    // === ENVIA PARA GEMINI ===
     const result = await model.generateContent([
       { text: prompt },
       { inlineData: { mimeType: "image/jpeg", data: pessoaBase64 } },
@@ -54,11 +67,11 @@ app.post("/tryon", async (req, res) => {
 
     const response = await result.response;
 
-    // === LOCALIZA IMAGEM RETORNADA ===
+    // === CAPTURA IMAGEM GERADA ===
     const imagePart = response?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
     if (!imagePart) {
       const text = response?.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
-      console.error("[TRYON][NO_IMAGE]", text);
+      console.error("[TRYON][NO_IMAGE]", text || "(sem texto)");
       throw new Error("Modelo não retornou imagem.");
     }
 
@@ -68,7 +81,10 @@ app.post("/tryon", async (req, res) => {
     fs.writeFileSync(outputPath, Buffer.from(base64, "base64"));
 
     console.log(`✅ Imagem gerada: ${filename} em ${Date.now() - t0}ms`);
-    return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
+    return res.json({
+      success: true,
+      image: `data:image/jpeg;base64,${base64}`,
+    });
 
   } catch (error) {
     console.error("❌ Erro no provador:", error?.message || error);
