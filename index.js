@@ -60,13 +60,13 @@ app.post("/tryon", async (req, res) => {
     }
 
     // === LIMPAR PREFIXO BASE64 ===
-    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
-    const roupaBase64  = fotoRoupa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
+    const pessoaBase64 = (fotoPessoa || "").replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
+    const roupaBase64  = (fotoRoupa  || "").replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
 
     console.log("[TRYON] pessoa bytes:", Buffer.from(pessoaBase64, "base64").length);
     console.log("[TRYON] roupa  bytes:", Buffer.from(roupaBase64, "base64").length);
 
-    // === PROMPT EN ===
+    // === PROMPT ===
     const prompt = `
 Apply the clothing from the second image onto the person in the first image.
 Preserve the person’s face, body, pose, lighting and background.
