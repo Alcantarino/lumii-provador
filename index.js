@@ -1,4 +1,4 @@
-// index.js — Lumii Provador (versão final revisada)
+// index.js — Lumii Provador Lincoln 2025 (Base64 fix definitivo)
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -36,65 +36,53 @@ app.post("/tryon", async (req, res) => {
       });
     }
 
-    // === LIMPAR BASE64 ===
-    const pessoaBase64 = (fotoPessoa || "")
-      .replace(/^data:image\/[a-zA-Z]+;base64,/, "")
-      .trim();
-    const roupaBase64 = (fotoRoupa || "")
-      .replace(/^data:image\/[a-zA-Z]+;base64,/, "")
-      .trim();
+    // === REMOVER PREFIXO Base64 ===
+    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
+    const roupaBase64  = fotoRoupa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
 
     console.log("🧠 Enviando imagens ao Gemini...");
+    console.log("Pessoa bytes:", Buffer.from(pessoaBase64, "base64").length);
+    console.log("Roupa  bytes:", Buffer.from(roupaBase64, "base64").length);
 
-    // === PROMPT técnico (formato AI Studio) ===
+    // === PROMPT técnico ===
     const prompt = `
-Generate a single realistic full-body photo.
-Take the person from the first image as the base photo.
-Take the clothing from the second image and put it on that person,
-preserving exact colors, patterns, and fabric details.
-Keep the face, body, pose, lighting and background natural.
-Return only the final composed image.`;
+Generate one single realistic full-body image.
+Use the first image as the base person photo.
+Use the second image as the clothing to apply.
+Preserve all fabric colors, textures, and patterns with perfect realism.
+Keep lighting, face, pose and body natural.
+Return only the final composite image.`;
 
-    // === FORMATO CORRETO para Gemini ===
-    const body = {
-      contents: [
-        {
-          parts: [
-            { text: prompt },
-            { inline_data: { mime_type: "image/jpeg", data: pessoaBase64 } },
-            { inline_data: { mime_type: "image/jpeg", data: roupaBase64 } }
-          ]
-        }
-      ]
-    };
+    // === CORPO do pedido ===
+    const parts = [
+      { text: prompt },
+      { inlineData: { mimeType: "image/jpeg", data: pessoaBase64 } },
+      { inlineData: { mimeType: "image/jpeg", data: roupaBase64 } }
+    ];
 
-    // === GERAR CONTEÚDO ===
-    const result = await model.generateContent(body, {
+    // === GERAR ===
+    const result = await model.generateContent(parts, {
       generationConfig: { responseMimeType: "image/jpeg" }
     });
 
     const response = await result.response;
-    const imagePart = response?.candidates?.[0]?.content?.parts?.find(
-      (p) => p.inline_data?.data
-    );
+    const imagePart =
+      response?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
 
     if (!imagePart) throw new Error("Não foi possível gerar a imagem.");
 
-    // === SALVAR IMAGEM ===
-    const base64 = imagePart.inline_data.data;
+    const base64 = imagePart.inlineData.data;
     const filename = `provador_${Date.now()}.jpg`;
     outputPath = path.join(TEMP_DIR, filename);
     fs.writeFileSync(outputPath, Buffer.from(base64, "base64"));
 
-    console.log(`✅ Imagem gerada: ${filename} em ${Date.now() - t0}ms`);
+    console.log(`✅ Imagem gerada: ${filename} (${Date.now() - t0}ms)`);
 
     return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
   } catch (error) {
     console.error("❌ Erro no provador:", error);
     if (outputPath && fs.existsSync(outputPath)) {
-      try {
-        fs.unlinkSync(outputPath);
-      } catch {}
+      try { fs.unlinkSync(outputPath); } catch {}
     }
     res.status(500).json({
       success: false,
@@ -105,6 +93,4 @@ Return only the final composed image.`;
 
 // === START ===
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () =>
-  console.log(`🚀 Lumii Provador rodando na porta ${PORT}`)
-);
+app.listen(PORT, () => console.log(`🚀 Lumii Provador rodando na porta ${PORT}`));
