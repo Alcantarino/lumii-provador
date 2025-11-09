@@ -93,6 +93,11 @@ app.post("/_echo", (req, res) => {
   });
 });
 
+// === HEALTH CHECK ===
+app.get("/_echo", (req, res) => {
+  res.json({ ok: true, message: "Lumii Provador ativo" });
+});
+	
 // TRY-ON
 app.post("/tryon", async (req, res) => {
   const t0 = Date.now();
