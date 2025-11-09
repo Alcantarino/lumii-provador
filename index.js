@@ -15,11 +15,11 @@ if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 // === GEMINI ===
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
 
 // === STATUS ===
-app.get("/", (_req, res) => {
-  res.status(200).send("✅ Lumii Provador ativo e rodando.");
+app.get("/", (req, res) => {
+  res.status(200).send("✅ Lumii Provador ativo!");
 });
 
 // === TRY-ON (Provador IA) ===
@@ -30,25 +30,32 @@ app.post("/tryon", async (req, res) => {
   try {
     const { fotoPessoa, fotoRoupa } = req.body || {};
     if (!fotoPessoa || !fotoRoupa) {
-      return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
+      return res.status(400).json({
+        success: false,
+        message: "Envie as duas imagens (pessoa e roupa)."
+      });
     }
 
     // === LIMPAR BASE64 ===
-    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
-    const roupaBase64  = fotoRoupa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
+    const pessoaBase64 = (fotoPessoa || "")
+      .replace(/^data:image\/[a-zA-Z]+;base64,/, "")
+      .trim();
+    const roupaBase64 = (fotoRoupa || "")
+      .replace(/^data:image\/[a-zA-Z]+;base64,/, "")
+      .trim();
 
     console.log("🧠 Enviando imagens ao Gemini...");
 
-    // === PROMPT ===
+    // === PROMPT técnico (formato AI Studio) ===
     const prompt = `
-You are a professional fashion image compositor.
-Take the person from the first image as the main subject (base photo).
-Take the clothing from the second image and accurately dress it on the person — 
-maintaining the exact colors, fabric texture, patterns, and shape from the clothing image.
-Preserve the model's body proportions, face, background, pose, and lighting naturally.
-Output a single realistic, full-body photograph of the person now wearing that clothing.`;
+Generate a single realistic full-body photo.
+Take the person from the first image as the base photo.
+Take the clothing from the second image and put it on that person,
+preserving exact colors, patterns, and fabric details.
+Keep the face, body, pose, lighting and background natural.
+Return only the final composed image.`;
 
-    // === ESTRUTURA CORRETA ===
+    // === FORMATO CORRETO para Gemini ===
     const body = {
       contents: [
         {
@@ -61,30 +68,43 @@ Output a single realistic, full-body photograph of the person now wearing that c
       ]
     };
 
-    const result = await model.generateContent(body);
-    const response = await result.response;
+    // === GERAR CONTEÚDO ===
+    const result = await model.generateContent(body, {
+      generationConfig: { responseMimeType: "image/jpeg" }
+    });
 
-    const imagePart = response?.candidates?.[0]?.content?.parts?.find(p => p.inline_data?.data);
+    const response = await result.response;
+    const imagePart = response?.candidates?.[0]?.content?.parts?.find(
+      (p) => p.inline_data?.data
+    );
 
     if (!imagePart) throw new Error("Não foi possível gerar a imagem.");
 
+    // === SALVAR IMAGEM ===
     const base64 = imagePart.inline_data.data;
     const filename = `provador_${Date.now()}.jpg`;
     outputPath = path.join(TEMP_DIR, filename);
     fs.writeFileSync(outputPath, Buffer.from(base64, "base64"));
 
     console.log(`✅ Imagem gerada: ${filename} em ${Date.now() - t0}ms`);
-    return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
 
+    return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
   } catch (error) {
     console.error("❌ Erro no provador:", error);
     if (outputPath && fs.existsSync(outputPath)) {
-      try { fs.unlinkSync(outputPath); } catch {}
+      try {
+        fs.unlinkSync(outputPath);
+      } catch {}
     }
-    res.status(500).json({ success: false, message: error.message || "Erro interno desconhecido." });
+    res.status(500).json({
+      success: false,
+      message: error.message || "Erro interno desconhecido."
+    });
   }
 });
 
 // === START ===
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Lumii Provador rodando na porta ${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Lumii Provador rodando na porta ${PORT}`)
+);
