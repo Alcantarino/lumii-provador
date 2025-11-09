@@ -48,7 +48,7 @@ app.get("/", (_req, res) => {
 });
 
 // === TRY-ON (Provador IA) ===
-// === TRY-ON (Provador IA) ===
+// === TRY-ON (Provador IA) — envia somente Base64 cru ===
 app.post("/tryon", async (req, res) => {
   let outputPath = null;
   const t0 = Date.now();
@@ -59,30 +59,43 @@ app.post("/tryon", async (req, res) => {
       return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
     }
 
-    // === LIMPAR PREFIXO BASE64 ===
-    const pessoaBase64 = (fotoPessoa || "").replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
-    const roupaBase64  = (fotoRoupa  || "").replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
+    // Remove o prefixo "data:image/...;base64," e guarda o MIME correto
+    const mPessoa = (fotoPessoa.match(/^data:(image\/[a-z0-9.+-]+);base64,/i) || [])[1] || "image/jpeg";
+    const mRoupa  = (fotoRoupa .match(/^data:(image\/[a-z0-9.+-]+);base64,/i) || [])[1] || "image/jpeg";
 
-    console.log("[TRYON] pessoa bytes:", Buffer.from(pessoaBase64, "base64").length);
-    console.log("[TRYON] roupa  bytes:", Buffer.from(roupaBase64, "base64").length);
+    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "").trim();
+    const roupaBase64  = fotoRoupa .replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "").trim();
 
-    // === PROMPT ===
-    const prompt = `
-Apply the clothing from the second image onto the person in the first image.
-Preserve the person’s face, body, pose, lighting and background.
-Keep the fabric color, texture and pattern faithful to the original garment.
-Return only the final realistic photo.`;
+    // Sanidade extra: se ainda vier com "data:", dispara erro claro
+    if (pessoaBase64.startsWith("data:") || roupaBase64.startsWith("data:")) {
+      return res.status(400).json({ success: false, message: "Formato inválido: envie DataURL completo; o servidor limpa o prefixo internamente." });
+    }
 
+    // Log curto (tamanhos em bytes) para validar que limpou
+    console.log("[TRYON] pessoa bytes:", Buffer.from(pessoaBase64, "base64").length, "mime:", mPessoa);
+    console.log("[TRYON] roupa  bytes:", Buffer.from(roupaBase64,  "base64").length, "mime:", mRoupa);
+
+    const prompt =
+      "Apply the clothing from the second image onto the person from the first image. " +
+      "Keep face, body, pose, lighting and background unchanged. " +
+      "Preserve the garment’s exact color, texture and print. Return only the final realistic photo.";
+
+    // Forma correta do SDK: array de parts com inlineData (camelCase)
     const result = await model.generateContent([
       { text: prompt },
-      { inlineData: { mimeType: "image/jpeg", data: pessoaBase64 } },
-      { inlineData: { mimeType: "image/jpeg", data: roupaBase64 } }
+      { inlineData: { mimeType: mPessoa, data: pessoaBase64 } },
+      { inlineData: { mimeType: mRoupa,  data: roupaBase64  } },
     ]);
 
     const response = await result.response;
-    const imagePart = response?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
 
-    if (!imagePart) throw new Error("Não foi possível gerar a imagem.");
+    // Procura a imagem retornada
+    const imagePart = response?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
+    if (!imagePart) {
+      const textMsg = response?.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
+      console.error("[TRYON][NO_IMAGE] Texto:", textMsg || "(vazio)");
+      throw new Error("Não foi possível gerar a imagem (resposta sem imagem do modelo).");
+    }
 
     const base64 = imagePart.inlineData.data;
     const filename = `provador_${Date.now()}.jpg`;
@@ -93,11 +106,11 @@ Return only the final realistic photo.`;
     return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
 
   } catch (error) {
-    console.error("❌ Erro no provador:", error);
+    console.error("❌ Erro no provador:", error?.message || error);
     if (outputPath && fs.existsSync(outputPath)) {
       try { fs.unlinkSync(outputPath); } catch {}
     }
-    res.status(500).json({ success: false, message: error.message || "Erro interno desconhecido." });
+    return res.status(500).json({ success: false, message: error?.message || "Erro interno desconhecido." });
   }
 });
 
