@@ -11,6 +11,23 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
+// --- health & debug ---
+app.get("/", (_req, res) => {
+  res.status(200).send("✅ Lumii Provador ativo!");
+});
+
+app.all("/_echo", (req, res) => {
+  res.json({
+    ok: true,
+    method: req.method,
+    path: req.path,
+    headers: req.headers,
+    bodyType: typeof req.body,
+    bodyIsBuffer: Buffer.isBuffer(req.body),
+    ts: new Date().toISOString(),
+  });
+});
+
 // Paths
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
