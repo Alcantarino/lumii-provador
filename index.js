@@ -1,4 +1,4 @@
-// index.js — Lumii Provador Alcantarino (fix inlineData + Base64 puro)
+// index.js — Lumii Provador Alcantarino (sanitize Base64 robusto + MIME correto + logs de verificação)
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -16,6 +16,31 @@ if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 // === GEMINI ===
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
+
+// util: extrai mime e base64 puro de um dataURL OU retorna base64 e mime padrão se já vier cru
+function parseImage(input) {
+  if (typeof input !== "string") return { mime: null, data: null };
+
+  // remove espaços/quebras invisíveis
+  const s = input.trim();
+
+  // dataURL completo?
+  const m = s.match(/^data:(image\/[a-z0-9+.\-]+);base64,(.+)$/i);
+  if (m) {
+    // m[1] = mime, m[2] = base64 puro
+    return { mime: m[1].toLowerCase(), data: m[2].replace(/\s+/g, "") };
+  }
+
+  // não é dataURL: tirar tudo até 'base64,' se tiver sido colado bruto
+  const idx = s.toLowerCase().lastIndexOf("base64,");
+  if (idx !== -1) {
+    const after = s.slice(idx + "base64,".length);
+    return { mime: "image/jpeg", data: after.replace(/\s+/g, "") };
+  }
+
+  // já é base64 puro (assumir jpeg)
+  return { mime: "image/jpeg", data: s.replace(/\s+/g, "") };
+}
 
 // === STATUS ===
 app.get("/", (_req, res) => {
@@ -36,15 +61,27 @@ app.post("/tryon", async (req, res) => {
       });
     }
 
-    // === REMOVER PREFIXO Base64 ===
-    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
-    const roupaBase64  = fotoRoupa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
+    // parse robusto
+    const p = parseImage(fotoPessoa);
+    const r = parseImage(fotoRoupa);
 
-    console.log("🧠 Enviando imagens ao Gemini...");
-    console.log("Pessoa bytes:", Buffer.from(pessoaBase64, "base64").length);
-    console.log("Roupa  bytes:", Buffer.from(roupaBase64, "base64").length);
+    if (!p.data || !r.data) {
+      return res.status(400).json({ success: false, message: "Formato de imagem inválido." });
+    }
 
-    // === PROMPT técnico (simples e direto, igual AI Studio) ===
+    // valida base64 decodificando (evita erro TYPE_BYTES)
+    let bufP, bufR;
+    try { bufP = Buffer.from(p.data, "base64"); } catch { /* noop */ }
+    try { bufR = Buffer.from(r.data, "base64"); } catch { /* noop */ }
+    if (!bufP?.length || !bufR?.length) {
+      return res.status(400).json({ success: false, message: "Base64 inválido nas imagens enviadas." });
+    }
+
+    // logs de verificação: NÃO devem conter 'data:image'
+    console.log("[TRYON] pessoa mime:", p.mime, "bytes:", bufP.length, "head:", p.data.slice(0, 30));
+    console.log("[TRYON] roupa  mime:", r.mime, "bytes:", bufR.length, "head:", r.data.slice(0, 30));
+
+    // PROMPT minimalista (mesma lógica do AI Studio)
     const prompt = `
 Generate one realistic full-body photo.
 Use the first image as the base person photo.
@@ -53,39 +90,43 @@ Preserve exact fabric color, texture, and pattern.
 Keep lighting, body, and face natural.
 Return only the final image (no text).`;
 
-    // === PARTS no formato correto ===
+    // PARTS no formato correto (inlineData camelCase) e COM base64 puro
     const parts = [
       { text: prompt },
-      { inlineData: { mimeType: "image/jpeg", data: pessoaBase64 } },
-      { inlineData: { mimeType: "image/jpeg", data: roupaBase64 } }
+      { inlineData: { mimeType: p.mime || "image/jpeg", data: p.data } },
+      { inlineData: { mimeType: r.mime || "image/jpeg", data: r.data } }
     ];
 
-    // === GERAR ===
     const result = await model.generateContent(parts, {
       generationConfig: { responseMimeType: "image/jpeg" }
     });
 
     const response = await result.response;
-    const imagePart = response?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
 
-    if (!imagePart) throw new Error("Não foi possível gerar a imagem (sem retorno de inlineData).");
+    // localizar a imagem retornada
+    const imagePart = response?.candidates?.[0]?.content?.parts?.find(x => x?.inlineData?.data);
+    if (!imagePart) {
+      const txt = response?.candidates?.[0]?.content?.parts?.find(x => x?.text)?.text;
+      console.error("[TRYON][NO_IMAGE] returned text:", (txt || "").slice(0, 400));
+      throw new Error("Não foi possível gerar a imagem (sem inlineData).");
+    }
 
-    const base64 = imagePart.inlineData.data;
+    const base64Out = imagePart.inlineData.data;
     const filename = `provador_${Date.now()}.jpg`;
     outputPath = path.join(TEMP_DIR, filename);
-    fs.writeFileSync(outputPath, Buffer.from(base64, "base64"));
+    fs.writeFileSync(outputPath, Buffer.from(base64Out, "base64"));
 
     console.log(`✅ Imagem gerada: ${filename} (${Date.now() - t0}ms)`);
-    return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
+    return res.json({ success: true, image: `data:image/jpeg;base64,${base64Out}` });
 
   } catch (error) {
-    console.error("❌ Erro no provador:", error);
+    console.error("❌ Erro no provador:", error?.message || error);
     if (outputPath && fs.existsSync(outputPath)) {
       try { fs.unlinkSync(outputPath); } catch {}
     }
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: error.message || "Erro interno desconhecido."
+      message: error?.message || "Erro interno desconhecido."
     });
   }
 });
