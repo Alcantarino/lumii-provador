@@ -16,6 +16,40 @@ app.get("/", (_req, res) => {
   res.status(200).send("✅ Lumii Provador ativo!");
 });
 
+// === ROTA DE DIAGNÓSTICO ===
+// Aceita GET/POST em /_echo para inspecionar payload e ambiente.
+function summarizePart(label, val) {
+  if (typeof val !== "string") return `${label}: (não é string)`;
+  const head = val.slice(0, 40);
+  const hasPrefix = /^data:image\/[a-z0-9.+-]+;base64,/i.test(val);
+  const cleaned = val.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
+  const bytes = Buffer.from(cleaned, "base64").length;
+  return `${label}: head="${head.replace(/\n/g,"")}" | hasPrefix=${hasPrefix} | bytes(base64)=${bytes}`;
+}
+
+app.all("/_echo", express.json({ limit: "50mb" }), (req, res) => {
+  const info = {
+    method: req.method,
+    hasBody: !!req.body,
+    keys: req.body ? Object.keys(req.body) : [],
+    env: {
+      hasGeminiKey: !!process.env.GEMINI_API_KEY,
+      node: process.version,
+    },
+    notes: []
+  };
+
+  try {
+    const { fotoPessoa, fotoRoupa } = req.body || {};
+    if (fotoPessoa) info.notes.push(summarizePart("fotoPessoa", fotoPessoa));
+    if (fotoRoupa)  info.notes.push(summarizePart("fotoRoupa",  fotoRoupa));
+  } catch (e) {
+    info.notes.push("erro ao analisar body: " + (e?.message || e));
+  }
+
+  res.status(200).json(info);
+});
+												 
 app.all("/_echo", (req, res) => {
   res.json({
     ok: true,
