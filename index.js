@@ -48,6 +48,7 @@ app.get("/", (_req, res) => {
 });
 
 // === TRY-ON (Provador IA) ===
+// === TRY-ON (Provador IA) ===
 app.post("/tryon", async (req, res) => {
   let outputPath = null;
   const t0 = Date.now();
@@ -55,79 +56,48 @@ app.post("/tryon", async (req, res) => {
   try {
     const { fotoPessoa, fotoRoupa } = req.body || {};
     if (!fotoPessoa || !fotoRoupa) {
-      return res.status(400).json({
-        success: false,
-        message: "Envie as duas imagens (pessoa e roupa)."
-      });
+      return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
     }
 
-    // parse robusto
-    const p = parseImage(fotoPessoa);
-    const r = parseImage(fotoRoupa);
+    // === LIMPAR PREFIXO BASE64 ===
+    const pessoaBase64 = fotoPessoa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
+    const roupaBase64  = fotoRoupa.replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
 
-    if (!p.data || !r.data) {
-      return res.status(400).json({ success: false, message: "Formato de imagem inválido." });
-    }
+    console.log("[TRYON] pessoa bytes:", Buffer.from(pessoaBase64, "base64").length);
+    console.log("[TRYON] roupa  bytes:", Buffer.from(roupaBase64, "base64").length);
 
-    // valida base64 decodificando (evita erro TYPE_BYTES)
-    let bufP, bufR;
-    try { bufP = Buffer.from(p.data, "base64"); } catch { /* noop */ }
-    try { bufR = Buffer.from(r.data, "base64"); } catch { /* noop */ }
-    if (!bufP?.length || !bufR?.length) {
-      return res.status(400).json({ success: false, message: "Base64 inválido nas imagens enviadas." });
-    }
-
-    // logs de verificação: NÃO devem conter 'data:image'
-    console.log("[TRYON] pessoa mime:", p.mime, "bytes:", bufP.length, "head:", p.data.slice(0, 30));
-    console.log("[TRYON] roupa  mime:", r.mime, "bytes:", bufR.length, "head:", r.data.slice(0, 30));
-
-    // PROMPT minimalista (mesma lógica do AI Studio)
+    // === PROMPT EN ===
     const prompt = `
-Generate one realistic full-body photo.
-Use the first image as the base person photo.
-Use the second image as the clothing to apply.
-Preserve exact fabric color, texture, and pattern.
-Keep lighting, body, and face natural.
-Return only the final image (no text).`;
+Apply the clothing from the second image onto the person in the first image.
+Preserve the person’s face, body, pose, lighting and background.
+Keep the fabric color, texture and pattern faithful to the original garment.
+Return only the final realistic photo.`;
 
-    // PARTS no formato correto (inlineData camelCase) e COM base64 puro
-    const parts = [
+    const result = await model.generateContent([
       { text: prompt },
-      { inlineData: { mimeType: p.mime || "image/jpeg", data: p.data } },
-      { inlineData: { mimeType: r.mime || "image/jpeg", data: r.data } }
-    ];
-
-    const result = await model.generateContent(parts, {
-      generationConfig: { responseMimeType: "image/jpeg" }
-    });
+      { inlineData: { mimeType: "image/jpeg", data: pessoaBase64 } },
+      { inlineData: { mimeType: "image/jpeg", data: roupaBase64 } }
+    ]);
 
     const response = await result.response;
+    const imagePart = response?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
 
-    // localizar a imagem retornada
-    const imagePart = response?.candidates?.[0]?.content?.parts?.find(x => x?.inlineData?.data);
-    if (!imagePart) {
-      const txt = response?.candidates?.[0]?.content?.parts?.find(x => x?.text)?.text;
-      console.error("[TRYON][NO_IMAGE] returned text:", (txt || "").slice(0, 400));
-      throw new Error("Não foi possível gerar a imagem (sem inlineData).");
-    }
+    if (!imagePart) throw new Error("Não foi possível gerar a imagem.");
 
-    const base64Out = imagePart.inlineData.data;
+    const base64 = imagePart.inlineData.data;
     const filename = `provador_${Date.now()}.jpg`;
     outputPath = path.join(TEMP_DIR, filename);
-    fs.writeFileSync(outputPath, Buffer.from(base64Out, "base64"));
+    fs.writeFileSync(outputPath, Buffer.from(base64, "base64"));
 
-    console.log(`✅ Imagem gerada: ${filename} (${Date.now() - t0}ms)`);
-    return res.json({ success: true, image: `data:image/jpeg;base64,${base64Out}` });
+    console.log(`✅ Imagem gerada: ${filename} em ${Date.now() - t0}ms`);
+    return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
 
   } catch (error) {
-    console.error("❌ Erro no provador:", error?.message || error);
+    console.error("❌ Erro no provador:", error);
     if (outputPath && fs.existsSync(outputPath)) {
       try { fs.unlinkSync(outputPath); } catch {}
     }
-    return res.status(500).json({
-      success: false,
-      message: error?.message || "Erro interno desconhecido."
-    });
+    res.status(500).json({ success: false, message: error.message || "Erro interno desconhecido." });
   }
 });
 
