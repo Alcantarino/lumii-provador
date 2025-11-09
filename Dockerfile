@@ -1,18 +1,14 @@
-# Lumii Provador — Dockerfile oficial
-FROM node:18-alpine
+# Dockerfile
+FROM node:20-slim
 
-# Define o diretório de trabalho dentro do container
 WORKDIR /app
 
-# Copia os arquivos de dependências e instala apenas o necessário para produção
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --omit=dev
 
-# Copia o restante do código do projeto
 COPY . .
 
-# Expõe a porta usada pelo Express
+ENV PORT=8080
 EXPOSE 8080
 
-# Comando padrão para iniciar o servidor
 CMD ["node", "index.js"]
