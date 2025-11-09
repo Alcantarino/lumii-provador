@@ -23,44 +23,47 @@ app.get("/", (req, res) => {
 
 // === Lincoln ===
 // === TRY-ON (Provador IA) ===
+// OBS: garanta que o 'model' foi criado com o modelo de imagem:
+// const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
+
 app.post("/tryon", async (req, res) => {
   let outputPath = null;
   const t0 = Date.now();
 
   try {
     const { fotoPessoa, fotoRoupa } = req.body || {};
-    if (!fotoPessoa || !fotoRoupa)
+    if (!fotoPessoa || !fotoRoupa) {
       return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
+    }
 
-    const pessoaBase64 = (fotoPessoa || "").replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
-    const roupaBase64  = (fotoRoupa  || "").replace(/^data:image\/[a-zA-Z]+;base64,/, "").trim();
+    // Limpeza: aceita dataURL (data:image/...;base64,...) ou base64 puro
+    const pessoaBase64 = String(fotoPessoa).replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "").replace(/\s+/g, "");
+    const roupaBase64  = String(fotoRoupa ).replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "").replace(/\s+/g, "");
 
-    console.log("🧠 Iniciando provador...");
+    // Sanidade rápida
+    if (!pessoaBase64 || !roupaBase64) {
+      return res.status(400).json({ success: false, message: "Imagens inválidas (base64 vazio)." });
+    }
+
     console.log("[TRYON] pessoa bytes:", Buffer.from(pessoaBase64, "base64").length);
-    console.log("[TRYON] roupa  bytes:", Buffer.from(roupaBase64, "base64").length);
+    console.log("[TRYON] roupa  bytes:",  Buffer.from(roupaBase64,  "base64").length);
 
-    // ✅ Modelo correto para gerar imagem
-    const imageModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
+    // Instrução fixa (sem input do usuário). Curta e direta.
+    const instruction = "Apply the clothing from image #2 onto the person in image #1, photorealistic, keep face/body/pose/lighting/background. Return image only.";
 
-    const prompt = `
-Fotografia realista de corpo inteiro.
-Aplique fielmente a roupa da segunda imagem sobre a pessoa da primeira.
-Mantenha rosto, corpo, pose e iluminação naturais.
-Integração perfeita entre pessoa e roupa, realismo máximo. Retorne apenas a imagem final.`;
-
-    const result = await imageModel.generateContent([
-      { text: prompt },
+    const result = await model.generateContent([
+      { text: instruction },
       { inlineData: { mimeType: "image/jpeg", data: pessoaBase64 } },
-      { inlineData: { mimeType: "image/jpeg", data: roupaBase64 } }
+      { inlineData: { mimeType: "image/jpeg", data: roupaBase64  } }
     ]);
 
     const response = await result.response;
     const imagePart = response?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
 
     if (!imagePart) {
-      const reason = response?.candidates?.[0]?.finishReason || response?.promptFeedback;
-      console.error("[TRYON][NO_IMAGE]", JSON.stringify(reason, null, 2));
-      throw new Error("O modelo não retornou imagem (verifique segurança ou formato das imagens).");
+      const txt = response?.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
+      console.error("[TRYON][NO_IMAGE]", txt || "(sem texto)");
+      throw new Error("Não foi possível gerar a imagem (modelo não retornou imagem).");
     }
 
     const generatedImageBase64 = imagePart.inlineData.data;
@@ -68,13 +71,13 @@ Integração perfeita entre pessoa e roupa, realismo máximo. Retorne apenas a i
     outputPath = path.join(TEMP_DIR, outputFilename);
     fs.writeFileSync(outputPath, Buffer.from(generatedImageBase64, "base64"));
 
-    console.log(`✅ Imagem gerada: ${outputFilename} (${Date.now() - t0}ms)`);
-    res.json({ success: true, image: `data:image/jpeg;base64,${generatedImageBase64}` });
+    console.log(`✅ Imagem gerada: ${outputFilename} em ${Date.now() - t0}ms`);
+    return res.status(200).json({ success: true, image: `data:image/jpeg;base64,${generatedImageBase64}` });
 
   } catch (error) {
-    console.error("❌ Erro no provador:", error);
-    if (outputPath && fs.existsSync(outputPath)) try { fs.unlinkSync(outputPath); } catch {}
-    res.status(500).json({ success: false, message: error.message || "Erro interno desconhecido." });
+    console.error("❌ Erro no provador:", error?.message || error);
+    if (outputPath && fs.existsSync(outputPath)) { try { fs.unlinkSync(outputPath); } catch {} }
+    return res.status(500).json({ success: false, message: error?.message || "Erro interno desconhecido." });
   }
 });
 
