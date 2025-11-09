@@ -1,4 +1,4 @@
-// index.js � Lumii Provador Lincoln Alcantarino (igual � estrutura do �modelos�, 2 imagens, Base64 saneado)
+// index.js — Lumii Provador (versão final, validação e corte real de prefixos)
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -15,106 +15,100 @@ if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 // === GEMINI ===
 if (!process.env.GEMINI_API_KEY) {
-  console.error("GEMINI_API_KEY ausente no ambiente.");
+  console.error("❌ GEMINI_API_KEY ausente no ambiente!");
 }
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
 
-// === UTIL: limpa DataURL e retorna { mime, data } ===
-function parseImage(input) {
-  if (typeof input !== "string" || !input.trim()) {
-    return { mime: null, data: null };
-  }
-  const s = input.trim();
-
-  // dataURL completo?
-  const m = s.match(/^data:(image\/[a-z0-9+.\-]+);base64,(.+)$/i);
-  if (m) {
-    return { mime: m[1].toLowerCase(), data: m[2].replace(/\s+/g, "") };
-  }
-
-  // caso tenha sido colado algo contendo "...base64,XXXX"
-  const idx = s.toLowerCase().lastIndexOf("base64,");
-  if (idx !== -1) {
-    const after = s.slice(idx + "base64,".length);
-    return { mime: "image/jpeg", data: after.replace(/\s+/g, "") };
-  }
-
-  // j� � base64 puro
-  return { mime: "image/jpeg", data: s.replace(/\s+/g, "") };
-}
-
 // === STATUS ===
 app.get("/", (_req, res) => {
-  res.status(200).send("Lumii Provador ativo!");
+  res.status(200).send("✅ Lumii Provador ativo e funcional!");
 });
 
-// === TRY-ON (Provador IA) ===
+// === UTIL — limpeza segura do Base64 ===
+function sanitizeBase64(dataUrl) {
+  if (typeof dataUrl !== "string" || !dataUrl.trim()) {
+    return { mime: "image/jpeg", base64: "" };
+  }
+
+  const trimmed = dataUrl.trim();
+
+  // Captura MIME e remove prefixo
+  const match = trimmed.match(/^data:(image\/[a-z0-9.+-]+);base64,(.*)$/i);
+  if (match) {
+    const mime = match[1].toLowerCase();
+    const pure = match[2].replace(/\s+/g, "");
+    return { mime, base64: pure };
+  }
+
+  // Já é base64 puro
+  return { mime: "image/jpeg", base64: trimmed.replace(/\s+/g, "") };
+}
+
+// === TRY-ON ===
 app.post("/tryon", async (req, res) => {
   let outputPath = null;
   const t0 = Date.now();
 
   try {
     const { fotoPessoa, fotoRoupa } = req.body || {};
+
     if (!fotoPessoa || !fotoRoupa) {
       return res.status(400).json({ success: false, message: "Envie as duas imagens (pessoa e roupa)." });
     }
 
-    // Limpa e detecta MIME corretamente
-    const pPessoa = parseImage(fotoPessoa);
-    const pRoupa  = parseImage(fotoRoupa);
+    // Limpeza e validação
+    const pessoa = sanitizeBase64(fotoPessoa);
+    const roupa  = sanitizeBase64(fotoRoupa);
 
-    if (!pPessoa.data || !pRoupa.data) {
-      return res.status(400).json({ success: false, message: "Formato de imagem inv�lido." });
+    if (!pessoa.base64 || !roupa.base64) {
+      return res.status(400).json({ success: false, message: "Imagens inválidas ou corrompidas." });
     }
 
-    // Sanidade: garantir que de fato ficou s� o base64 cru
-    if (pPessoa.data.startsWith("data:") || pRoupa.data.startsWith("data:")) {
-      return res.status(400).json({ success: false, message: "Envie DataURL completo; o servidor remove o prefixo internamente." });
-    }
+    console.log("🧠 Base64 sanitized:");
+    console.log(" - Pessoa MIME:", pessoa.mime, "| Bytes:", Buffer.from(pessoa.base64, "base64").length);
+    console.log(" - Roupa  MIME:", roupa.mime,  "| Bytes:", Buffer.from(roupa.base64,  "base64").length);
 
-    // Logs de tamanho para confirmar limpeza
-    console.log("[TRYON] pessoa bytes:", Buffer.from(pPessoa.data, "base64").length, "mime:", pPessoa.mime);
-    console.log("[TRYON] roupa  bytes:", Buffer.from(pRoupa.data,  "base64").length, "mime:", pRoupa.mime);
+    const prompt = `
+Apply the clothing from the second image onto the person from the first image.
+Keep the face, body, pose, lighting, and background natural.
+Preserve the garment’s exact color, pattern, and texture fidelity.
+Return only the final realistic full-body image.
+`;
 
-    const prompt =
-      "Apply the clothing from the second image onto the person from the first image. " +
-      "Keep face, body, pose, lighting and background unchanged. " +
-      "Preserve the garment's exact color, texture and print. Return only the final realistic photo.";
-
-    // Forma correta do SDK (@google/generative-ai): parts com inlineData (camelCase)
     const result = await model.generateContent([
       { text: prompt },
-      { inlineData: { mimeType: pPessoa.mime, data: pPessoa.data } },
-      { inlineData: { mimeType: pRoupa.mime,  data: pRoupa.data  } },
+      { inlineData: { mimeType: pessoa.mime, data: pessoa.base64 } },
+      { inlineData: { mimeType: roupa.mime,  data: roupa.base64  } },
     ]);
 
     const response = await result.response;
-
-    // Busca a imagem retornada
     const imagePart = response?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+
     if (!imagePart) {
-      const txt = response?.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text;
-      console.error("[TRYON][NO_IMAGE] Texto retornado:", txt || "(vazio)");
-      throw new Error("N�o foi poss�vel gerar a imagem (resposta sem imagem do modelo).");
+      const textPart = response?.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text;
+      console.error("⚠️ Nenhuma imagem retornada. Texto:", textPart || "(vazio)");
+      throw new Error("O modelo não retornou imagem.");
     }
 
-    const base64 = imagePart.inlineData.data;
+    const outputBase64 = imagePart.inlineData.data;
     const filename = `provador_${Date.now()}.jpg`;
     outputPath = path.join(TEMP_DIR, filename);
-    fs.writeFileSync(outputPath, Buffer.from(base64, "base64"));
 
-    console.log(`Imagem gerada: ${filename} em ${Date.now() - t0}ms`);
-    return res.json({ success: true, image: `data:image/jpeg;base64,${base64}` });
+    fs.writeFileSync(outputPath, Buffer.from(outputBase64, "base64"));
+    console.log(`✅ Imagem gerada: ${filename} (${Date.now() - t0}ms)`);
+
+    return res.json({ success: true, image: `data:image/jpeg;base64,${outputBase64}` });
+
   } catch (error) {
-    console.error("Erro no provador:", error?.message || error);
+    console.error("❌ Erro no provador:", error);
     if (outputPath && fs.existsSync(outputPath)) {
       try { fs.unlinkSync(outputPath); } catch {}
     }
-    return res.status(500).json({ success: false, message: error?.message || "Erro interno desconhecido." });
+    return res.status(500).json({ success: false, message: error.message || "Erro interno desconhecido." });
   }
 });
 
 // === START ===
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Lumii Provador rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Lumii Provador rodando na porta ${PORT}`));
